@@ -48,7 +48,7 @@ acceptTCP(LSock) ->
   spawn(main, acceptTCP, [LSock]),
   controller(ASock, 0).
 
-controller(ASock, CoinCount) when CoinCount < ?CoinsPerWorker ->
+controller(ASock, CoinCount) ->
   inet:setopts(ASock, [{active, once}]),
   receive
     {tcp, ASock, <<"found", Coin/binary>>} ->
@@ -58,11 +58,7 @@ controller(ASock, CoinCount) when CoinCount < ?CoinsPerWorker ->
     {tcp, ASock, <<"ready">>} ->
       gen_tcp:send(ASock, "mine"),
       controller(ASock, CoinCount)
-  end;
-controller(ASock, CoinCount) when CoinCount >= ?CoinsPerWorker ->
-  gen_tcp:send(ASock, "halt"),
-  gen_tcp:close(ASock),
-  erlang:system_time(seconds).
+  end.
 
 worker(ASock) ->
   inet:setopts(ASock, [{active, once}]),
