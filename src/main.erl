@@ -62,8 +62,8 @@ controller(ASock) ->
     {tcp, ASock, <<"ready">>} ->
       gen_tcp:send(ASock, "mine"),
       controller(ASock);
-    {} ->
-        controller(ASock)
+    {tcp, ASock, <<"halt">>} ->
+        erlang:system_time(milli_seconds)
   end.
 
 worker(ASock) ->
@@ -82,5 +82,6 @@ start(Host) ->
   worker(ASock).
 
 start() ->
+  StartTime = erlang:system_time(milli_seconds),
   Pid = spawn_link(main, listenTCP, []),
   {ok, Pid}.
