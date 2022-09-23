@@ -1,0 +1,4 @@
+/out
+/.idea
+rebar3
+*.beam
