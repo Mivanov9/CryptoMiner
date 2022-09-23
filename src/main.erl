@@ -7,12 +7,13 @@
 -import(string,[trim/3]).
 
 %% API
--export([start/1, start/0, mine/0, acceptTCP/1, controller/1, listenTCP/0]).
+-export([start/1, start/0, mine/0, acceptTCP/1, controller/2]).
 
 -define(Zero, 48).
 -define(GatorID, "ivanovmichael").
 -define(K, 4).
 -define(Port, 6000).
+-define(CoinsPerWorker, 5).
 
 countZeros(String, Count) when length(String) > 0 ->
   [H | T] = String,
@@ -42,29 +43,26 @@ randomString() ->
   B64String = base64:encode(crypto:strong_rand_bytes(16)),
   string:trim(B64String, trailing, "=").
 
-listenTCP() ->
-  {ok, LSock} = gen_tcp:listen(?Port, [binary, {active, false}]),
-  spawn(main, acceptTCP, [LSock]),
-  timer:sleep(infinity).
-
 acceptTCP(LSock) ->
   {ok, ASock} = gen_tcp:accept(LSock),
   spawn(main, acceptTCP, [LSock]),
-  controller(ASock).
+  controller(ASock, 0).
 
-controller(ASock) ->
+controller(ASock, CoinCount) when CoinCount < ?CoinsPerWorker ->
   inet:setopts(ASock, [{active, once}]),
   receive
     {tcp, ASock, <<"found", Coin/binary>>} ->
       io:format("~s\n", [Coin]),
       gen_tcp:send(ASock, "mine"),
-      controller(ASock);
+      controller(ASock, CoinCount + 1);
     {tcp, ASock, <<"ready">>} ->
       gen_tcp:send(ASock, "mine"),
-      controller(ASock);
-    {tcp, ASock, <<"halt">>} ->
-        erlang:system_time(milli_seconds)
-  end.
+      controller(ASock, CoinCount)
+  end;
+controller(ASock, CoinCount) when CoinCount >= ?CoinsPerWorker ->
+  gen_tcp:send(ASock, "halt"),
+  gen_tcp:close(ASock),
+  erlang:system_time(seconds).
 
 worker(ASock) ->
   inet:setopts(ASock, [{active, once}]),
@@ -73,7 +71,9 @@ worker(ASock) ->
       io:format("mining..\n"),
       Coin = mine(),
       gen_tcp:send(ASock, Coin),
-      worker(ASock)
+      worker(ASock);
+    {tcp, ASock, <<"halt">>} ->
+      gen_tcp:close(ASock)
   end.
 
 start(Host) ->
@@ -82,6 +82,8 @@ start(Host) ->
   worker(ASock).
 
 start() ->
-  StartTime = erlang:system_time(milli_seconds),
-  Pid = spawn_link(main, listenTCP, []),
-  {ok, Pid}.
+  StartTime = erlang:system_time(seconds),
+  {ok, LSock} = gen_tcp:listen(?Port, [binary, {active, false}]),
+  StopTime = acceptTCP(LSock),
+
+  io:format("Real Time: ~p seconds\n", [StopTime - StartTime]).
