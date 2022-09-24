@@ -7,13 +7,13 @@
 -import(string,[trim/3]).
 
 %% API
--export([start/2, start/1, start/0, halt/2]).
+-export([start/2, start/1, start/0, halt/2, mine/3]).
 
 -define(Zero, 48).
 -define(GatorID, "ivanovmichael").
 -define(K, 4).
 -define(Port, 6000).
--define(ExpireTime, 8000).
+-define(MinerCount, 5).
 
 countZeros(String, Count) when length(String) > 0 ->
   [H | T] = String,
@@ -30,12 +30,15 @@ getHash(String) ->
   EncodedHash = crypto:hash(sha256, String),
   io_lib:format("~64.16.0b", [binary:decode_unsigned(EncodedHash)]).
 
-mine() ->
+mine(Pid, Host, Port) ->
   RandomString = concat(?GatorID, randomString()),
   Hash = getHash(RandomString),
   case countZeros(Hash, 0) >= ?K of
-    true -> io_lib:format("found~s\t~s", [RandomString, Hash]);
-    false -> mine()
+    true ->
+      Coin = io_lib:format("found~s\t~s", [RandomString, Hash]),
+      Pid ! {found, Host, Port, Coin},
+      mine(Pid, Host, Port);
+    false -> mine(Pid, Host, Port)
   end.
 
 % https://stackoverflow.com/questions/12788799/how-to-generate-a-random-alphanumeric-string-with-erlang
@@ -45,9 +48,8 @@ randomString() ->
 
 controller(Sock) ->
   receive
-    {udp, Sock, Host, Port, <<"found", Coin/binary>>} ->
+    {udp, Sock, _, _, <<"found", Coin/binary>>} ->
       io:format("~s\n", [Coin]),
-      gen_udp:send(Sock, Host, Port, "mine"),
       controller(Sock);
     {udp, Sock, Host, Port, <<"ready">>} ->
       gen_udp:send(Sock, Host, Port, "mine"),
@@ -61,17 +63,28 @@ worker(Sock) ->
   receive
     {udp, Sock, Host, Port, <<"mine">>} ->
       io:format("mining..\n"),
-      Coin = mine(),
-      gen_udp:send(Sock, Host, Port, Coin),
+      Self = self(),
+      spawnMiners(?MinerCount, Self, Host, Port),
       worker(Sock);
     {udp, _, _, _, <<"halt">>} ->
       gen_udp:close(Sock);
+    {found, Host, Port, Coin} ->
+      gen_udp:send(Sock, Host, Port, Coin),
+      worker(Sock);
     _ -> % Controller closed
       gen_udp:close(Sock)
   end.
 
-start(Host, Port) -> % Start worker with Host IP and specified Port
-  {ok, Sock} = gen_udp:open(Port, [binary, {active, true}]),
+spawnMiners(Count, Self, Host, Port) when Count > 0 ->
+  io:format("Spawn miner ~p\n", [Count]),
+  spawn(main, mine, [Self, Host, Port]),
+  spawnMiners(Count - 1, Self, Host, Port);
+
+spawnMiners(Count, _, _, _) when Count == 0 ->
+  ok.
+
+start(Host, CustomPort) -> % Start worker with Host IP and specified Port
+  {ok, Sock} = gen_udp:open(CustomPort, [binary, {active, true}]),
   gen_udp:send(Sock, Host, ?Port, "ready"),
   worker(Sock).
 
