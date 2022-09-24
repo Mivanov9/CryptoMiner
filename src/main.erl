@@ -7,13 +7,13 @@
 -import(string,[trim/3]).
 
 %% API
--export([start/1, start/0, mine/0, acceptTCP/1, controller/1]).
+-export([start/2, start/1, start/0, halt/2]).
 
 -define(Zero, 48).
 -define(GatorID, "ivanovmichael").
 -define(K, 4).
 -define(Port, 6000).
--define(CoinsPerWorker, 5).
+-define(ExpireTime, 8000).
 
 countZeros(String, Count) when length(String) > 0 ->
   [H | T] = String,
@@ -43,43 +43,50 @@ randomString() ->
   B64String = base64:encode(crypto:strong_rand_bytes(16)),
   string:trim(B64String, trailing, "=").
 
-acceptTCP(LSock) ->
-  {ok, ASock} = gen_tcp:accept(LSock),
-  spawn(main, acceptTCP, [LSock]),
-  controller(ASock).
-
-controller(ASock) ->
-  inet:setopts(ASock, [{active, once}]),
+controller(Sock) ->
   receive
-    {tcp, ASock, <<"found", Coin/binary>>} ->
+    {udp, Sock, Host, Port, <<"found", Coin/binary>>} ->
       io:format("~s\n", [Coin]),
-      gen_tcp:send(ASock, "mine"),
-      controller(ASock);
-    {tcp, ASock, <<"ready">>} ->
-      gen_tcp:send(ASock, "mine"),
-      controller(ASock)
+      gen_udp:send(Sock, Host, Port, "mine"),
+      controller(Sock);
+    {udp, Sock, Host, Port, <<"ready">>} ->
+      gen_udp:send(Sock, Host, Port, "mine"),
+      controller(Sock);
+    {udp, _, _, _, <<"halt">>} ->
+      gen_udp:close(Sock),
+      erlang:system_time(seconds)
   end.
 
-worker(ASock) ->
-  inet:setopts(ASock, [{active, once}]),
+worker(Sock) ->
   receive
-    {tcp, ASock, <<"mine">>} ->
+    {udp, Sock, Host, Port, <<"mine">>} ->
       io:format("mining..\n"),
       Coin = mine(),
-      gen_tcp:send(ASock, Coin),
-      worker(ASock);
-    {tcp, ASock, <<"halt">>} ->
-      gen_tcp:close(ASock)
+      gen_udp:send(Sock, Host, Port, Coin),
+      worker(Sock);
+    {udp, _, _, _, <<"halt">>} ->
+      gen_udp:close(Sock);
+    _ -> % Controller closed
+      gen_udp:close(Sock)
   end.
 
-start(Host) ->
-  {ok, ASock} = gen_tcp:connect(Host, ?Port, [binary, {active, true}]),
-  gen_tcp:send(ASock, "ready"),
-  worker(ASock).
+start(Host, Port) -> % Start worker with Host IP and specified Port
+  {ok, Sock} = gen_udp:open(Port, [binary, {active, true}]),
+  gen_udp:send(Sock, Host, ?Port, "ready"),
+  worker(Sock).
 
-start() ->
+start(Host) -> % Start worker with Host IP
+  {ok, Sock} = gen_udp:open(?Port, [binary, {active, true}]),
+  gen_udp:send(Sock, Host, ?Port, "ready"),
+  worker(Sock).
+
+start() -> % Start controller and wait for workers
   StartTime = erlang:system_time(seconds),
-  {ok, LSock} = gen_tcp:listen(?Port, [binary, {active, false}]),
-  StopTime = acceptTCP(LSock),
+  {ok, Sock} = gen_udp:open(?Port, [binary, {active,true}]),
+  StopTime = controller(Sock),
 
   io:format("Real Time: ~p seconds\n", [StopTime - StartTime]).
+
+halt(Host, Port) -> % Halt the controller
+  {ok, Sock} = gen_udp:open(Port, [binary, {active, true}]),
+  gen_udp:send(Sock, Host, ?Port, "halt").
