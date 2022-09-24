@@ -7,7 +7,7 @@
 -import(string,[trim/3]).
 
 %% API
--export([start/1, start/0, mine/0, acceptTCP/1, controller/2]).
+-export([start/1, start/0, mine/0, acceptTCP/1, controller/1]).
 
 -define(Zero, 48).
 -define(GatorID, "ivanovmichael").
@@ -46,18 +46,18 @@ randomString() ->
 acceptTCP(LSock) ->
   {ok, ASock} = gen_tcp:accept(LSock),
   spawn(main, acceptTCP, [LSock]),
-  controller(ASock, 0).
+  controller(ASock).
 
-controller(ASock, CoinCount) ->
+controller(ASock) ->
   inet:setopts(ASock, [{active, once}]),
   receive
     {tcp, ASock, <<"found", Coin/binary>>} ->
       io:format("~s\n", [Coin]),
       gen_tcp:send(ASock, "mine"),
-      controller(ASock, CoinCount + 1);
+      controller(ASock);
     {tcp, ASock, <<"ready">>} ->
       gen_tcp:send(ASock, "mine"),
-      controller(ASock, CoinCount)
+      controller(ASock)
   end.
 
 worker(ASock) ->
